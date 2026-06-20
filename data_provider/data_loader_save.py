@@ -10,8 +10,16 @@ import h5py
 
 warnings.filterwarnings('ignore')
 
+DEFAULT_ROOT_PATH = os.environ.get("T3TIME_DATA_ROOT", "./dataset/")
+
+
+def _resolve_data_path(root_path, data_path):
+    csv_name = data_path if data_path.endswith('.csv') else data_path + '.csv'
+    return os.path.join(root_path, csv_name)
+
+
 class Dataset_ETT_hour(Dataset):
-    def __init__(self, root_path="/mnt/d/Monaf/Personal/Time_series_forecasting/T3Time/dataset/", flag='train', size=None, 
+    def __init__(self, root_path=DEFAULT_ROOT_PATH, flag='train', size=None, 
                  features='M', data_path='ETTh1',
                  target='OT', scale=False, inverse=False, timeenc=0, freq='h'):
 
@@ -32,19 +40,14 @@ class Dataset_ETT_hour(Dataset):
         self.root_path = root_path
         self.data_path = data_path
 
-        # Append '.csv' if not present
-        if not data_path.endswith('.csv'):
-            data_path_file = data_path
-            data_path += '.csv' 
-        self.data_path = os.path.join(root_path, data_path)
-        self.data_path_file = data_path_file
+        self.data_path_file = os.path.basename(data_path[:-4] if data_path.endswith('.csv') else data_path)
+        self.data_path = _resolve_data_path(root_path, data_path)
 
         self.__read_data__()
 
     def __read_data__(self):
         self.scaler = StandardScaler()
-        df_raw = pd.read_csv(os.path.join(self.root_path,
-                                          self.data_path))
+        df_raw = pd.read_csv(self.data_path)
 
         border1s = [0, 12*30*24 - self.seq_len, 12*30*24+4*30*24 - self.seq_len]
         border2s = [12*30*24, 12*30*24+4*30*24, 12*30*24+8*30*24]
@@ -103,7 +106,7 @@ class Dataset_ETT_hour(Dataset):
         return self.scaler.inverse_transform(data)
 
 class Dataset_ETT_minute(Dataset):
-    def __init__(self, root_path="/mnt/d/Monaf/Personal/Time_series_forecasting/T3Time/dataset/", flag='train', size=None, 
+    def __init__(self, root_path=DEFAULT_ROOT_PATH, flag='train', size=None, 
                  features='M', data_path='ETTm1', 
                  target='OT', scale=False, inverse=False, timeenc=0, freq='t', cols=None):
 
@@ -130,18 +133,14 @@ class Dataset_ETT_minute(Dataset):
         self.root_path = root_path
         self.data_path = data_path
 
-        if not data_path.endswith('.csv'):
-            data_path_file = data_path
-            data_path += '.csv' 
-        self.data_path = os.path.join(root_path, data_path)
-        self.data_path_file = data_path_file
+        self.data_path_file = os.path.basename(data_path[:-4] if data_path.endswith('.csv') else data_path)
+        self.data_path = _resolve_data_path(root_path, data_path)
 
         self.__read_data__()
 
     def __read_data__(self):
         self.scaler = StandardScaler()
-        df_raw = pd.read_csv(os.path.join(self.root_path,
-                                          self.data_path))
+        df_raw = pd.read_csv(self.data_path)
 
         border1s = [0, 12*30*24*4 - self.seq_len, 12*30*24*4+4*30*24*4 - self.seq_len]
         border2s = [12*30*24*4, 12*30*24*4+4*30*24*4, 12*30*24*4+8*30*24*4]
@@ -204,7 +203,7 @@ class Dataset_ETT_minute(Dataset):
         return self.scaler.inverse_transform(data)
 
 class Dataset_Custom(Dataset):
-    def __init__(self, root_path="/mnt/d/Monaf/Personal/Time_series_forecasting/T3Time/dataset/", flag='train', size=None,
+    def __init__(self, root_path=DEFAULT_ROOT_PATH, flag='train', size=None,
                  features='M', data_path='ECL',
                  target='OT', scale=False, timeenc=0, freq='h',patch_len=16,percent=100):
         # size [seq_len, label_len, pred_len]
@@ -233,18 +232,14 @@ class Dataset_Custom(Dataset):
         self.root_path = root_path
         self.data_path = data_path
 
-        if not data_path.endswith('.csv'):
-            data_path_file = data_path
-            data_path += '.csv' 
-        self.data_path = os.path.join(root_path, data_path)
-        self.data_path_file = data_path_file
+        self.data_path_file = os.path.basename(data_path[:-4] if data_path.endswith('.csv') else data_path)
+        self.data_path = _resolve_data_path(root_path, data_path)
 
         self.__read_data__()
 
     def __read_data__(self):
         self.scaler = StandardScaler()
-        df_raw = pd.read_csv(os.path.join(self.root_path,
-                                          self.data_path))
+        df_raw = pd.read_csv(self.data_path)
 
         '''
         df_raw.columns: ['date', ...(other features), target feature]

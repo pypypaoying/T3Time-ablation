@@ -9,11 +9,39 @@ import warnings
 import h5py
 warnings.filterwarnings('ignore')
 
+DEFAULT_ROOT_PATH = os.environ.get("T3TIME_DATA_ROOT", "./dataset/")
+DEFAULT_EMBED_ROOT_PATH = os.environ.get("T3TIME_EMBED_ROOT", "./Embeddings/")
+
+
+def _resolve_paths(root_path, data_path):
+    data_path_name = os.path.basename(data_path)
+    data_path_file = data_path_name[:-4] if data_path_name.endswith('.csv') else data_path_name
+    csv_name = data_path if data_path.endswith('.csv') else data_path + '.csv'
+    return data_path_file, os.path.join(root_path, csv_name)
+
+
+def _embedding_index(index, dataset_len, text_ablation, text_shift):
+    if text_ablation == "shift_text":
+        return (index + text_shift) % dataset_len
+    return index
+
+
+def _read_embedding(embed_path, index):
+    file_path = os.path.join(embed_path, f"{index}.h5")
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"No embedding file found at {file_path}")
+    with h5py.File(file_path, 'r') as hf:
+        data = hf['embeddings'][:]
+        tensor = torch.from_numpy(data)
+    return torch.stack([tensor.squeeze(0)], dim=-1)
+
+
 class Dataset_ETT_hour(Dataset):
-    def __init__(self, root_path="/mnt/d/Monaf/Personal/Time_series_forecasting/T3Time/dataset/", flag='train', size=None, 
+    def __init__(self, root_path=DEFAULT_ROOT_PATH, flag='train', size=None, 
                  features='M', data_path='ETTh1', num_nodes=7,
                  target='OT', scale=True, inverse=False, timeenc=0, freq='h',
-                 model_name="gpt2"):
+                 model_name="gpt2", embed_root_path=DEFAULT_EMBED_ROOT_PATH,
+                 text_ablation="full", text_shift=1, d_llm=768):
         # size [seq_len, label_len, pred_len]
         # info
         if size == None:
@@ -36,25 +64,22 @@ class Dataset_ETT_hour(Dataset):
         self.freq = freq
         self.timeenc = timeenc
         self.num_nodes = num_nodes
+        self.d_llm = d_llm
         self.root_path = root_path
         self.data_path = data_path
+        self.text_ablation = text_ablation
+        self.text_shift = text_shift
 
-        # Append '.csv' if not present
-        if not data_path.endswith('.csv'):
-            data_path_file = data_path
-            data_path += '.csv' 
-        self.data_path = os.path.join(root_path, data_path)
-        self.data_path_file = data_path_file
+        self.data_path_file, self.data_path = _resolve_paths(root_path, data_path)
 
         self.model_name = model_name
-        self.embed_path = f"/mnt/d/Monaf/Personal/Time_series_forecasting/T3Time/Embeddings/{data_path_file}/{flag}/"
+        self.embed_path = os.path.join(embed_root_path, self.data_path_file, flag)
 
         self.__read_data__()
 
     def __read_data__(self):
         self.scaler = StandardScaler()
-        df_raw = pd.read_csv(os.path.join(self.root_path,
-                                          self.data_path))
+        df_raw = pd.read_csv(self.data_path)
 
         border1s = [0, 12*30*24 - self.seq_len, 12*30*24+4*30*24 - self.seq_len]
         border2s = [12*30*24, 12*30*24+4*30*24, 12*30*24+8*30*24]
@@ -105,18 +130,11 @@ class Dataset_ETT_hour(Dataset):
         seq_x_mark = self.data_stamp[s_begin:s_end]
         seq_y_mark = self.data_stamp[r_begin:r_end]
 
-        embeddings_stack = []
-        file_path = os.path.join(self.embed_path, f"{index}.h5")
-        
-        if os.path.exists(file_path):
-            with h5py.File(file_path, 'r') as hf:
-                data = hf['embeddings'][:]
-                tensor = torch.from_numpy(data)
-                embeddings_stack.append(tensor.squeeze(0))
+        if self.text_ablation in {"no_text", "zero_text"}:
+            embeddings = torch.zeros((self.d_llm, self.num_nodes, 1), dtype=torch.float32)
         else:
-            raise FileNotFoundError(f"No embedding file found at {file_path}")       
-        
-        embeddings = torch.stack(embeddings_stack, dim=-1)
+            emb_index = _embedding_index(index, len(self), self.text_ablation, self.text_shift)
+            embeddings = _read_embedding(self.embed_path, emb_index)
 
         return seq_x, seq_y, seq_x_mark, seq_y_mark, embeddings
         # return seq_x, seq_y, seq_x_mark, seq_y_mark
@@ -128,9 +146,11 @@ class Dataset_ETT_hour(Dataset):
         return self.scaler.inverse_transform(data)
    
 class Dataset_ETT_minute(Dataset):
-    def __init__(self, root_path="/mnt/d/Monaf/Personal/Time_series_forecasting/T3Time/dataset/", flag='train', size=None, 
+    def __init__(self, root_path=DEFAULT_ROOT_PATH, flag='train', size=None, 
                  features='M', data_path='ETTm1', model_name="gpt2",
-                 target='OT', scale=True, inverse=False, timeenc=0, freq='t', cols=None):
+                 target='OT', scale=True, inverse=False, timeenc=0, freq='t', cols=None,
+                 embed_root_path=DEFAULT_EMBED_ROOT_PATH, text_ablation="full",
+                 text_shift=1, num_nodes=7, d_llm=768):
         # size [seq_len, label_len, pred_len]
         # info
         if size == None:
@@ -154,23 +174,21 @@ class Dataset_ETT_minute(Dataset):
         self.freq = freq
         self.root_path = root_path
         self.data_path = data_path
+        self.num_nodes = num_nodes
+        self.d_llm = d_llm
+        self.text_ablation = text_ablation
+        self.text_shift = text_shift
 
-        # Append '.csv' if not present
-        if not data_path.endswith('.csv'):
-            data_path_file = data_path
-            data_path += '.csv' 
-        self.data_path = os.path.join(root_path, data_path)
-        self.data_path_file = data_path_file
+        self.data_path_file, self.data_path = _resolve_paths(root_path, data_path)
 
         self.model_name = model_name
-        self.embed_path = f"/mnt/d/Monaf/Personal/Time_series_forecasting/T3Time/Embeddings/{data_path_file}/{flag}/"
+        self.embed_path = os.path.join(embed_root_path, self.data_path_file, flag)
 
         self.__read_data__()
 
     def __read_data__(self):
         self.scaler = StandardScaler()
-        df_raw = pd.read_csv(os.path.join(self.root_path,
-                                          self.data_path))
+        df_raw = pd.read_csv(self.data_path)
 
         border1s = [0, 12*30*24*4 - self.seq_len, 12*30*24*4+4*30*24*4 - self.seq_len]
         border2s = [12*30*24*4, 12*30*24*4+4*30*24*4, 12*30*24*4+8*30*24*4]
@@ -220,18 +238,11 @@ class Dataset_ETT_minute(Dataset):
         seq_x_mark = self.data_stamp[s_begin:s_end]
         seq_y_mark = self.data_stamp[r_begin:r_end]
 
-        embeddings_stack = []
-        file_path = os.path.join(self.embed_path, f"{index}.h5")
-        
-        if os.path.exists(file_path):
-            with h5py.File(file_path, 'r') as hf:
-                data = hf['embeddings'][:]
-                tensor = torch.from_numpy(data)
-                embeddings_stack.append(tensor.squeeze(0))
+        if self.text_ablation in {"no_text", "zero_text"}:
+            embeddings = torch.zeros((self.d_llm, self.num_nodes, 1), dtype=torch.float32)
         else:
-            raise FileNotFoundError(f"No embedding file found at {file_path}")       
-        
-        embeddings = torch.stack(embeddings_stack, dim=-1)
+            emb_index = _embedding_index(index, len(self), self.text_ablation, self.text_shift)
+            embeddings = _read_embedding(self.embed_path, emb_index)
 
         return seq_x, seq_y, seq_x_mark, seq_y_mark, embeddings
     
@@ -242,10 +253,12 @@ class Dataset_ETT_minute(Dataset):
         return self.scaler.inverse_transform(data)
 
 class Dataset_Custom(Dataset):
-    def __init__(self, root_path="/mnt/d/Monaf/Personal/Time_series_forecasting/T3Time/dataset/", flag='train', size=None,
+    def __init__(self, root_path=DEFAULT_ROOT_PATH, flag='train', size=None,
                  features='M', data_path='ECL',
                  target='OT', scale=True, timeenc=0, freq='h',
-                 patch_len=16,percent=100,model_name="gpt2"):
+                 patch_len=16,percent=100,model_name="gpt2",
+                 embed_root_path=DEFAULT_EMBED_ROOT_PATH, text_ablation="full",
+                 text_shift=1, num_nodes=7, d_llm=768):
         # size [seq_len, label_len, pred_len]
         # info
         self.percent = percent
@@ -271,22 +284,21 @@ class Dataset_Custom(Dataset):
 
         self.root_path = root_path
         self.data_path = data_path
+        self.num_nodes = num_nodes
+        self.d_llm = d_llm
+        self.text_ablation = text_ablation
+        self.text_shift = text_shift
 
-        if not data_path.endswith('.csv'):
-            data_path_file = data_path
-            data_path += '.csv' 
-        self.data_path = os.path.join(root_path, data_path)
-        self.data_path_file = data_path_file
+        self.data_path_file, self.data_path = _resolve_paths(root_path, data_path)
 
         self.model_name = model_name
-        self.embed_path = f"/mnt/d/Monaf/Personal/Time_series_forecasting/T3Time/Embeddings/{data_path_file}/{flag}/"
+        self.embed_path = os.path.join(embed_root_path, self.data_path_file, flag)
 
         self.__read_data__()
 
     def __read_data__(self):
         self.scaler = StandardScaler()
-        df_raw = pd.read_csv(os.path.join(self.root_path,
-                                          self.data_path))
+        df_raw = pd.read_csv(self.data_path)
 
         '''
         df_raw.columns: ['date', ...(other features), target feature]
@@ -351,19 +363,11 @@ class Dataset_Custom(Dataset):
 
         # auto_y = self.data_x[s_begin+self.patch_len:s_end+self.patch_len]
 
-        embeddings_stack = []
-        # for n in range(self.num_nodes):
-        # print("embed_path in __getitem__:", self.embed_path)
-        file_path = os.path.join(self.embed_path, f"{index}.h5")
-        if os.path.exists(file_path):
-            with h5py.File(file_path, 'r') as hf:
-                data = hf['embeddings'][:]
-                tensor = torch.from_numpy(data)
-                embeddings_stack.append(tensor.squeeze(0))
+        if self.text_ablation in {"no_text", "zero_text"}:
+            embeddings = torch.zeros((self.d_llm, self.num_nodes, 1), dtype=torch.float32)
         else:
-            raise FileNotFoundError(f"No embedding file found at {file_path}")
-                
-        embeddings = torch.stack(embeddings_stack, dim=-1)
+            emb_index = _embedding_index(index, len(self), self.text_ablation, self.text_shift)
+            embeddings = _read_embedding(self.embed_path, emb_index)
         # print("Shape of embeddings: " ,embeddings.shape)
         return seq_x, seq_y, seq_x_mark, seq_y_mark, embeddings
 

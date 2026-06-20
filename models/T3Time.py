@@ -106,7 +106,8 @@ class TriModal(nn.Module):
         e_layer = 1,
         d_layer = 1,
         d_ff=32,
-        head =8
+        head =8,
+        text_ablation = "full"
     ):
         super().__init__()
 
@@ -121,6 +122,7 @@ class TriModal(nn.Module):
         self.d_layer = d_layer
         self.d_ff = d_ff
         self.head = head
+        self.text_ablation = text_ablation
 
         self.normalize_layers = Normalize(self.num_nodes, affine=False).to(self.device)
         self.length_to_feature = nn.Linear(self.seq_len, self.channel).to(self.device)
@@ -190,6 +192,24 @@ class TriModal(nn.Module):
         return freq_enc_out
     
 
+    def _ablate_embeddings(self, embeddings):
+        if self.text_ablation == "full" or self.text_ablation == "shift_text":
+            return embeddings
+        if self.text_ablation == "zero_text":
+            return torch.zeros_like(embeddings)
+        if self.text_ablation == "mean_text":
+            return embeddings.mean(dim=(1, 2), keepdim=True).expand_as(embeddings)
+        if self.text_ablation == "shuffle_text":
+            if embeddings.size(0) <= 1:
+                return embeddings
+            perm = torch.randperm(embeddings.size(0), device=embeddings.device)
+            return embeddings[perm]
+        if self.text_ablation == "noise_text":
+            mean = embeddings.mean(dim=(1, 2), keepdim=True)
+            std = embeddings.std(dim=(1, 2), keepdim=True).clamp_min(1e-6)
+            return torch.randn_like(embeddings) * std + mean
+        raise ValueError(f"Unknown text_ablation mode: {self.text_ablation}")
+
     def forward(self, input_data, input_data_mark, embeddings):
         input_data = input_data.float()
         input_data_mark = input_data_mark.float()
@@ -213,6 +233,16 @@ class TriModal(nn.Module):
         gate = self.rich_horizon_gate(enc_out, self.pred_len)               # [B, C, 1]
         enc_out = gate * freq_enc_out.permute(0,2,1) + (1 - gate) * enc_out # [B, C, N]
         
+        if self.text_ablation == "no_text":
+            cross_out = enc_out.permute(0, 2, 1)                          # [B, N, C]
+            dec_out = self.decoder(cross_out, cross_out)                   # [B, N, C]
+            dec_out = self.c_to_length(dec_out)                            # [B, N, L]
+            dec_out = dec_out.permute(0,2,1)                                # [B, L, N]
+            dec_out = self.normalize_layers(dec_out, 'denorm')
+            return dec_out
+
+        embeddings = self._ablate_embeddings(embeddings)
+
         #------ Prompt encoding 
         embeddings = self.prompt_encoder(embeddings)                        # [B, N, E]
         embeddings = embeddings.permute(0,2,1)                              # [B, E, N]
