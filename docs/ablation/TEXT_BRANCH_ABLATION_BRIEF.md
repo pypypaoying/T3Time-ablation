@@ -1,167 +1,175 @@
-# Text Branch Ablation Brief
+# T3Time 文本分支消融实验简报
 
-## Objective
+## 实验目标
 
-This experiment tests whether the text branch in T3Time makes a genuine contribution to forecasting accuracy. The key question is not whether the full model can train, but whether correctly matched text embeddings improve forecasts compared with models where the text pathway is removed, emptied, or deliberately mismatched.
+本实验用于验证 T3Time 中的文本分支是否真的对时间序列预测产生有效贡献。核心问题不是“完整模型能否正常训练”，而是：在相同数据、相同超参数、相同训练预算下，正确匹配的文本嵌入是否优于移除文本、清空文本或故意错配文本后的模型。
 
-## Experimental Setting
+如果完整模型相对这些对照组没有稳定优势，那么不能声称文本分支提供了真实有效的预测信息。
 
-Datasets:
+## 实验设置
 
-| Dataset | Frequency / Domain | Variables | Prediction Lengths |
+数据集：
+
+| 数据集 | 频率 / 场景 | 变量数 | 预测长度 |
 | --- | --- | ---: | --- |
-| `ETTm1` | Electricity transformer, 15-minute | 7 | 96, 192, 336, 720 |
-| `ETTm2` | Electricity transformer, 15-minute | 7 | 96, 192, 336, 720 |
-| `ETTh1` | Electricity transformer, hourly | 7 | 96, 192, 336, 720 |
-| `ETTh2` | Electricity transformer, hourly | 7 | 96, 192, 336, 720 |
-| `Weather` | Weather station, 10-minute | 21 | 96, 192, 336, 720 |
-| `exchange_rate` | Daily exchange rates | 8 | 96, 192, 336, 720 |
-| `ILI` | Weekly influenza-like illness | 7 | 24, 36, 48, 60 |
+| `ETTm1` | 电力变压器，15 分钟粒度 | 7 | 96, 192, 336, 720 |
+| `ETTm2` | 电力变压器，15 分钟粒度 | 7 | 96, 192, 336, 720 |
+| `ETTh1` | 电力变压器，小时粒度 | 7 | 96, 192, 336, 720 |
+| `ETTh2` | 电力变压器，小时粒度 | 7 | 96, 192, 336, 720 |
+| `Weather` | 气象站，10 分钟粒度 | 21 | 96, 192, 336, 720 |
+| `exchange_rate` | 日频汇率数据 | 8 | 96, 192, 336, 720 |
+| `ILI` | 周频流感样病例数据 | 7 | 24, 36, 48, 60 |
 
-Splits:
-- Use the official T3Time/long-term forecasting train, validation, and test splits implemented in the repository.
-- Model selection uses validation loss.
-- Final reporting uses test MSE and test MAE averaged across all forecast horizons inside each prediction length.
+数据划分：
 
-Seeds:
-- Main runs: `2024, 2025, 2026, 2027, 2028`.
-- Report mean and standard deviation across seeds.
-- If runtime becomes unexpectedly large, first keep all datasets and reduce to seeds `2024, 2025, 2026`; do not reduce the ablation variants before reducing seeds.
+- 使用仓库中已有的数据划分逻辑，即官方长序列预测任务的训练集、验证集和测试集划分。
+- 使用验证集损失选择最佳 checkpoint。
+- 最终报告测试集 MSE 和 MAE，并对每个预测长度内部的所有预测步取平均。
 
-Training budget:
-- Compute budget is assumed sufficient.
-- Use the same hyperparameters as the official T3Time scripts for each dataset and prediction length.
-- Generate GPT-2 prompt embeddings once per dataset/split and reuse them across variants.
-- Run all variants with the same data split, prediction length, seed, optimizer, learning rate, batch size, model width, and epoch budget.
+随机种子：
 
-Primary metrics:
-- Test MSE: main metric.
-- Test MAE: secondary metric.
-- Validation MSE, best epoch, and runtime are recorded for auditability.
+- 主实验使用 `2024, 2025, 2026, 2027, 2028` 五个种子。
+- 每个结果报告种子均值和标准差。
+- 如果实际运行时间明显超出预期，优先保留全部数据集和全部核心模型变体，将种子数缩减为 `2024, 2025, 2026`；不要优先删减消融变体。
 
-## Model Variants
+训练预算：
 
-### 1. Full T3Time
+- 假设计算预算充裕。
+- 每个数据集和预测长度使用官方脚本中的超参数。
+- GPT-2 文本嵌入按数据集和 split 预先生成一次，所有变体复用同一份嵌入文件。
+- 同一组对比必须保持数据划分、预测长度、种子、优化器、学习率、batch size、模型宽度、训练 epoch 等设置完全一致。
 
-This is the original model. It uses three information sources:
+评价指标：
 
-- the numerical time-series history;
-- the frequency-domain representation of the same history;
-- a text prompt embedding generated from the time-series values and timestamps.
+- 主指标：测试集 MSE。
+- 辅助指标：测试集 MAE。
+- 审计指标：验证集最优损失、最佳 epoch、平均训练时间、平均验证时间。
 
-The text embedding is passed through the prompt encoder and then fused with the numerical representation through the model's cross-modal alignment module. This is the reference system.
+## 模型变体说明
 
-### 2. No-Text Model
+### 1. 完整 T3Time
 
-This variant removes the text pathway from the forward pass. The model still uses:
+这是原始模型。它使用三类信息：
 
-- the numerical time-series branch;
-- the frequency-domain branch;
-- the same decoder and output projection.
+- 数值时间序列历史窗口；
+- 同一历史窗口的频域表示；
+- 由时间序列数值和时间戳构造 prompt 后得到的 GPT-2 文本嵌入。
 
-However, it does not use the prompt encoder or cross-modal alignment with text. This answers: "Can the model do just as well without any text branch at all?"
+文本嵌入会进入 prompt encoder，然后通过跨模态对齐模块与数值表示融合。该变体作为主参考模型。
 
-If this variant matches or beats Full T3Time, the text branch is not necessary for the tested setting.
+### 2. 无文本模型
 
-### 3. Zero-Text Model
+该变体在前向传播中完全移除文本路径。模型仍然保留：
 
-This variant keeps the text pathway structurally present, but replaces every text embedding with zeros before it enters the prompt encoder.
+- 数值时间序列分支；
+- 频域分支；
+- 相同的 decoder 和输出投影层。
 
-The purpose is to distinguish two possibilities:
+但它不使用 prompt encoder，也不进行文本与数值表示之间的跨模态对齐。
 
-- the text branch helps because it carries meaningful information;
-- the text branch helps merely because it adds extra layers, parameters, or regularization.
+这个变体回答的问题是：如果完全不用文本分支，模型是否仍然可以达到同等甚至更好的预测效果？
 
-If Full T3Time beats Zero-Text, that supports the claim that text content matters. If they are similar, the text pathway may be acting mostly as extra architecture rather than as a meaningful modality.
+如果无文本模型与完整 T3Time 持平或更好，则说明在当前任务设置下文本分支并非必要。
 
-### 4. Shifted-Text Model
+### 3. 零文本模型
 
-This variant keeps real GPT-2 text embeddings, but intentionally assigns each training/test sample the embedding from a different sample in the same split.
+该变体保留文本分支的结构，但在文本嵌入进入 prompt encoder 之前，将所有文本嵌入替换为全零张量。
 
-This preserves the overall distribution, scale, and type of text embeddings, but breaks the correct match between the time-series window and its text description.
+这个变体用于区分两种可能：
 
-This answers: "Does the model need the correct text for the correct sample, or does any plausible-looking text embedding work?"
+- 文本分支有帮助，是因为文本嵌入携带了有效信息；
+- 文本分支有帮助，只是因为它引入了额外层、额外参数或某种正则化效果。
 
-If Shifted-Text performs close to Full T3Time, the text branch may not be using sample-specific semantic information. If Full T3Time clearly beats Shifted-Text, that supports genuine text alignment.
+如果完整 T3Time 明显优于零文本模型，说明文本内容本身可能有贡献。如果二者接近，则文本路径可能主要是在提供额外结构，而不是提供有效文本信息。
 
-### 5. Mean-Text Diagnostic
+### 4. 错配文本模型
 
-This variant replaces each text embedding with a constant embedding equal to its own average value. It preserves a rough embedding scale but removes token-level and variable-level detail.
+该变体仍然使用真实 GPT-2 文本嵌入，但故意把每个样本对应到同一 split 中另一个样本的文本嵌入。
 
-This is a diagnostic, not a main baseline. It tests whether coarse embedding magnitude is enough to explain the gain.
+这样做会保留文本嵌入的整体分布、尺度和格式，但打破“当前时间序列窗口”和“当前文本描述”之间的正确对应关系。
 
-### 6. Shuffled-Text Diagnostic
+这个变体回答的问题是：模型是否真的需要当前样本对应的正确文本，还是只要看到一份看起来合理的文本嵌入就能获得类似收益？
 
-This variant randomly permutes text embeddings within each mini-batch. The model sees real embeddings, but they usually belong to the wrong samples.
+如果错配文本模型接近完整 T3Time，说明文本分支可能没有利用样本级语义对应关系。如果完整 T3Time 明显优于错配文本模型，则支持“正确文本对齐确实有用”的判断。
 
-This is a cheaper online mismatch check. It is less controlled than Shifted-Text, but useful for diagnosing whether performance depends on correct sample-text pairing.
+### 5. 均值文本诊断模型
 
-### 7. Noise-Text Diagnostic
+该变体把每个文本嵌入替换为其自身均值构成的常量嵌入。它大致保留嵌入的尺度，但删除 token 级和变量级细节。
 
-This variant replaces the text embedding with Gaussian noise matched to the batch mean and standard deviation.
+这是诊断实验，不是主 baseline。它用于判断文本分支收益是否只来自粗粒度嵌入幅值或偏置。
 
-It tests whether the text branch behaves like a noise injection or regularization mechanism. If Noise-Text is close to Full T3Time, the text branch should not be interpreted as a meaningful semantic branch.
+### 6. 批内打乱文本诊断模型
 
-## Main Comparison Matrix
+该变体在每个 mini-batch 内随机打乱文本嵌入。模型看到的仍是真实文本嵌入，但这些嵌入通常属于错误样本。
 
-Must-run variants:
+这是一个较便宜的在线错配检查。它没有错配文本模型那么严格，但可以辅助判断性能是否依赖正确的样本-文本配对。
 
-| Variant | Purpose | Main Interpretation |
+### 7. 噪声文本诊断模型
+
+该变体用高斯噪声替换文本嵌入，并让噪声的均值和标准差与当前 batch 的文本嵌入统计量一致。
+
+它用于检查文本分支是否只是类似噪声注入或正则化。如果噪声文本模型接近完整 T3Time，则不能把文本分支解释为有效语义分支。
+
+## 主对比矩阵
+
+必须运行的核心变体：
+
+| 变体 | 目的 | 主要解释 |
 | --- | --- | --- |
-| Full T3Time | Reference model | Best case for text contribution |
-| No-Text | Remove text pathway | Tests whether text pathway is necessary |
-| Zero-Text | Keep pathway but remove text content | Tests whether text content matters |
-| Shifted-Text | Keep real embeddings but mismatch samples | Tests whether correct text-sample alignment matters |
+| 完整 T3Time | 原始参考模型 | 文本分支贡献的最好情况 |
+| 无文本模型 | 完全移除文本路径 | 检查文本路径是否必要 |
+| 零文本模型 | 保留文本路径但移除文本内容 | 检查文本内容是否重要 |
+| 错配文本模型 | 使用真实文本嵌入但故意错配样本 | 检查正确文本-样本配对是否重要 |
 
-Optional diagnostic variants:
+可选诊断变体：
 
-| Variant | Purpose |
+| 变体 | 目的 |
 | --- | --- |
-| Mean-Text | Tests whether embedding scale/average is enough |
-| Shuffled-Text | Tests online wrong-text sensitivity |
-| Noise-Text | Tests whether random embedding-like noise explains the gain |
+| 均值文本诊断模型 | 检查嵌入尺度或均值是否足以解释收益 |
+| 批内打乱文本诊断模型 | 检查模型对错误文本配对是否敏感 |
+| 噪声文本诊断模型 | 检查随机类文本噪声是否足以解释收益 |
 
-## Reporting Plan
+## 结果报告方式
 
-For each dataset and prediction length, report:
+每个数据集和预测长度报告：
 
-- seed-mean test MSE and test MAE for every variant;
-- standard deviation across seeds;
-- absolute and percentage difference from Full T3Time;
-- best validation epoch and average runtime as audit fields.
+- 每个变体的测试集 MSE 和 MAE 种子均值；
+- 每个变体的种子标准差；
+- 相对于完整 T3Time 的绝对差值和百分比差值；
+- 最佳验证 epoch 和平均运行时间作为审计信息。
 
-Recommended main table:
+建议主表：
 
-| Dataset | Pred Len | Full MSE | No-Text MSE | Zero-Text MSE | Shifted-Text MSE | Full vs Best Ablation |
+| 数据集 | 预测长度 | 完整模型 MSE | 无文本 MSE | 零文本 MSE | 错配文本 MSE | 完整模型相对最佳消融的差异 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 
-Recommended appendix table:
+建议附录表：
 
-| Dataset | Pred Len | Variant | MSE mean | MSE std | MAE mean | MAE std | Relative MSE vs Full |
+| 数据集 | 预测长度 | 变体 | MSE 均值 | MSE 标准差 | MAE 均值 | MAE 标准差 | 相对完整模型的 MSE 差异 |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
 
-## Decision Rule
+## 判定规则
 
-The text branch is considered useful only if Full T3Time is consistently better than all three core controls: No-Text, Zero-Text, and Shifted-Text.
+只有当完整 T3Time 稳定优于三个核心对照组，即无文本模型、零文本模型和错配文本模型时，才认为文本分支提供了有效预测信息。
 
-Interpretation:
+具体解释：
 
-- Full beats No-Text: the text pathway adds value beyond the time and frequency branches.
-- Full beats Zero-Text: the text content matters, not just extra layers.
-- Full beats Shifted-Text: the correct pairing between sample and text matters.
-- Full does not beat No-Text: the text branch is not needed.
-- Full beats No-Text but not Zero-Text: gains may come from architecture or regularization, not text information.
-- Full beats Zero-Text but not Shifted-Text: text embeddings may help through distributional effects rather than correct semantic alignment.
+- 完整模型优于无文本模型：文本路径在数值分支和频域分支之外提供了额外价值。
+- 完整模型优于零文本模型：文本内容本身有贡献，而不只是额外层或额外参数有贡献。
+- 完整模型优于错配文本模型：正确的样本-文本配对有贡献。
+- 完整模型不优于无文本模型：文本分支在该设置下不是必要的。
+- 完整模型优于无文本模型，但不优于零文本模型：收益可能来自结构或正则化，而不是文本信息。
+- 完整模型优于零文本模型，但不优于错配文本模型：文本嵌入可能通过分布效应起作用，而不是通过正确语义对齐起作用。
 
-## Recommended Execution
+## 建议执行命令
 
-Smoke test:
+Smoke test：
 
 ```bash
 DATASETS=ETTm1 HORIZONS=96 SEEDS=2024 VARIANTS=no_text,zero_text EPOCHS_OVERRIDE=1 MAX_TRAIN_BATCHES=2 MAX_EVAL_BATCHES=2 NUM_WORKERS=0 bash scripts/run_text_ablation.sh
 ```
 
-Full main experiment:
+完整主实验：
 
 ```bash
 DATASETS=ETTm1,ETTm2,ETTh1,ETTh2,Weather,exchange_rate \
@@ -171,7 +179,7 @@ VARIANTS=full,no_text,zero_text,shift_text \
 bash scripts/run_text_ablation.sh --prepare-embeddings --skip-existing
 ```
 
-For `ILI`, use its own horizons:
+`ILI` 使用单独的预测长度：
 
 ```bash
 DATASETS=ILI \
@@ -181,7 +189,7 @@ VARIANTS=full,no_text,zero_text,shift_text \
 bash scripts/run_text_ablation.sh --prepare-embeddings --skip-existing
 ```
 
-Diagnostic experiment:
+诊断实验：
 
 ```bash
 DATASETS=ETTm1,ETTh1 \
